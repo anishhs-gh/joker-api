@@ -37,3 +37,5 @@ build/
 
 # Postie
 .postierc
+
+src/serviceAccountKey.json
