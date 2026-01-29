@@ -11,13 +11,13 @@ export class ProjectController {
   }
 
   async createProject(req: Request, res: Response) {
-    const { name } = req.body as CreateProjectRequest;
-
-    if (!name) {
-      throw new ValidationError('Project name is required');
-    }
-
     try {
+      const { name } = req.body as CreateProjectRequest;
+
+      if (!name) {
+        throw new ValidationError('Project name is required');
+      }
+
       const project = await this.projectService.createProject(name);
       res.status(201).json(project);
     } catch (error) {

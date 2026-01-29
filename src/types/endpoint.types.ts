@@ -1,3 +1,5 @@
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+
 export interface MockEndpoint {
   id: string;
   projectId: string;
@@ -8,33 +10,35 @@ export interface MockEndpoint {
     body: any;
     headers?: Record<string, string>;
   };
-  statusCode?: number;
   delay?: number;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface CreateEndpointRequest {
   projectId: string;
   path: string;
-  method: string;
+  method: HttpMethod;
   response: {
     status: number;
     body: any;
     headers?: Record<string, string>;
   };
-  statusCode?: number;
   delay?: number;
 }
 
 export interface UpdateEndpointRequest {
   path?: string;
-  method?: string;
+  method?: HttpMethod;
   response?: {
-    status?: number;
-    body?: any;
+    status: number;
+    body: any;
     headers?: Record<string, string>;
   };
-  statusCode?: number;
   delay?: number;
+}
+
+export interface MockConfig {
+  endpoints: MockEndpoint[];
+  port?: number;
 } 

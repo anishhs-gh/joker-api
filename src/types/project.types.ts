@@ -3,8 +3,8 @@ export interface Project {
   name: string;
   nameLower: string;
   description?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface CreateProjectRequest {

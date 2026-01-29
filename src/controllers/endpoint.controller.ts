@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import { EndpointService } from '../services/endpoint.service';
-import { CreateEndpointRequest } from '../types';
-import { UpdateEndpointRequest } from '../types/endpoint.types';
+import { CreateEndpointRequest, UpdateEndpointRequest } from '../types/endpoint.types';
 import { ValidationError } from '../types/error.types';
 
 export class EndpointController {
@@ -13,34 +12,31 @@ export class EndpointController {
 
   async createEndpoint(req: Request, res: Response) {
     const { projectId } = req.params;
-    console.log('Received projectId in createEndpoint:', projectId);
     const endpointData = req.body as CreateEndpointRequest;
 
     try {
       // Validate required fields
       if (!endpointData.path || !endpointData.method || !endpointData.response) {
-        return res.status(400).json({ 
-          error: 'Missing required fields: path, method, and response are required' 
-        });
+        throw new ValidationError('Missing required fields: path, method, and response are required');
       }
 
       // Validate response object
       if (typeof endpointData.response !== 'object') {
-        return res.status(400).json({ 
-          error: `Response must be an object, received ${typeof endpointData.response}. Example: { "status": 200, "body": { "message": "Hello" } }` 
-        });
+        throw new ValidationError(
+          `Response must be an object, received ${typeof endpointData.response}. Example: { "status": 200, "body": { "message": "Hello" } }`
+        );
       }
 
       if (Array.isArray(endpointData.response)) {
-        return res.status(400).json({ 
-          error: 'Response must be an object, not an array. Example: { "status": 200, "body": { "message": "Hello" } }' 
-        });
+        throw new ValidationError(
+          'Response must be an object, not an array. Example: { "status": 200, "body": { "message": "Hello" } }'
+        );
       }
 
       if (!endpointData.response.status || !endpointData.response.body) {
-        return res.status(400).json({ 
-          error: 'Response must include status and body fields. Example: { "status": 200, "body": { "message": "Hello" } }' 
-        });
+        throw new ValidationError(
+          'Response must include status and body fields. Example: { "status": 200, "body": { "message": "Hello" } }'
+        );
       }
 
       // Set the projectId from the URL parameter
@@ -48,17 +44,8 @@ export class EndpointController {
 
       const endpoint = await this.endpointService.createEndpoint(endpointData);
       res.status(201).json(endpoint);
-    } catch (error: any) {
-      if (error instanceof ValidationError) {
-        return res.status(400).json({ error: error.message });
-      }
-      if (error.name === 'ProjectNotFoundError') {
-        return res.status(404).json({ error: error.message });
-      }
-      if (error.message?.includes('already exists')) {
-        return res.status(409).json({ error: error.message });
-      }
-      res.status(500).json({ error: 'Internal server error' });
+    } catch (error) {
+      this.handleError(error, res);
     }
   }
 
@@ -103,7 +90,7 @@ export class EndpointController {
     if (error.name === 'ProjectNotFoundError' || error.name === 'EndpointNotFoundError') {
       return res.status(404).json({ error: error.message });
     }
-    if (error.name === 'EndpointAlreadyExistsError') {
+    if (error.name === 'EndpointAlreadyExistsError' || error.message?.includes('already exists')) {
       return res.status(409).json({ error: error.message });
     }
     res.status(500).json({ error: 'Internal server error' });

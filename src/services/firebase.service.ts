@@ -1,19 +1,41 @@
 import * as admin from 'firebase-admin';
+import * as fs from 'fs';
 import { Project, MockEndpoint, CreateEndpointRequest } from '../types';
 import { UpdateEndpointRequest } from '../types/endpoint.types';
 import { UpdateProjectRequest } from '../types/project.types';
 import { ProjectNotFoundError, ProjectAlreadyExistsError } from '../types/error.types';
+import { FirebaseConfig } from '../types/config.types';
 
 export class FirebaseService {
   private db: admin.firestore.Firestore;
 
-  constructor(config: { projectId: string; serviceAccountKeyPath: string }) {
-    const serviceAccount = require(config.serviceAccountKeyPath);
+  constructor(config: FirebaseConfig) {
+    const credential = this.resolveCredential(config);
+
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+      credential,
       projectId: config.projectId
     });
     this.db = admin.firestore();
+  }
+
+  private resolveCredential(config: FirebaseConfig): admin.credential.Credential {
+    // Priority 1: Direct credentials object (e.g., from env var)
+    if (config.serviceAccountCredentials) {
+      return admin.credential.cert(config.serviceAccountCredentials as admin.ServiceAccount);
+    }
+
+    // Priority 2: Service account key file path
+    if (config.serviceAccountKeyPath) {
+      const serviceAccount = JSON.parse(
+        fs.readFileSync(config.serviceAccountKeyPath, 'utf-8')
+      );
+      return admin.credential.cert(serviceAccount);
+    }
+
+    // Priority 3: Application Default Credentials (ADC)
+    // This uses GOOGLE_APPLICATION_CREDENTIALS env var or GCP metadata service
+    return admin.credential.applicationDefault();
   }
 
   async createProject(name: string): Promise<Project> {
@@ -123,7 +145,6 @@ export class FirebaseService {
       path: data.path,
       method: data.method,
       response: data.response,
-      statusCode: data.statusCode || data.response.status,
       delay: data.delay || 0,
       createdAt: Date.now(),
       updatedAt: Date.now()

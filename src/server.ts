@@ -1,5 +1,10 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import fs from 'fs';
+import fsPromises from 'fs/promises';
+import path from 'path';
 import { Server as HttpServer } from 'http';
 import { Server as WebSocketServer, WebSocket } from 'ws';
 
@@ -32,27 +37,84 @@ export class MockApiServer {
   private projectController: ProjectController;
   private endpointController: EndpointController;
 
-  // Basic in-memory storage for logs (replace with a more robust solution for production)
+  // Log storage with file persistence
   private logs: LogEntry[] = [];
+  private logsDir: string;
   // Map to store connected WebSocket clients by project ID
   private clients: Map<string, WebSocket[]> = new Map();
 
   constructor(config: ServerConfig) {
     this.config = config;
+    this.logsDir = path.resolve(__dirname, '../logs');
     this.firebaseService = new FirebaseService(config.firebase);
     this.projectService = new ProjectService(this.firebaseService);
     this.endpointService = new EndpointService(this.firebaseService);
     this.projectController = new ProjectController(this.projectService);
     this.endpointController = new EndpointController(this.endpointService);
-    
+
+    this.ensureLogsDirectory();
+    this.loadLogs();
     this.setupMiddleware();
     this.setupRoutes();
     this.setupErrorHandling();
   }
 
+  private ensureLogsDirectory() {
+    if (!fs.existsSync(this.logsDir)) {
+      fs.mkdirSync(this.logsDir, { recursive: true });
+    }
+  }
+
+  private getLogFilePath(projectId: string): string {
+    return path.join(this.logsDir, `${projectId}.json`);
+  }
+
+  private loadLogs() {
+    try {
+      if (!fs.existsSync(this.logsDir)) return;
+
+      const files = fs.readdirSync(this.logsDir).filter(f => f.endsWith('.json'));
+      for (const file of files) {
+        const filePath = path.join(this.logsDir, file);
+        const data = fs.readFileSync(filePath, 'utf-8');
+        const projectLogs: LogEntry[] = JSON.parse(data);
+        this.logs.push(...projectLogs.map(log => ({
+          ...log,
+          timestamp: new Date(log.timestamp)
+        })));
+      }
+      console.log(`Loaded ${this.logs.length} logs from disk`);
+    } catch (error) {
+      console.error('Error loading logs from disk:', error);
+    }
+  }
+
+  private async saveLogs(projectId: string): Promise<void> {
+    try {
+      const projectLogs = this.logs.filter(log => log.projectId === projectId);
+      const filePath = this.getLogFilePath(projectId);
+      await fsPromises.writeFile(filePath, JSON.stringify(projectLogs, null, 2));
+    } catch (error) {
+      console.error(`Error saving logs for project ${projectId}:`, error);
+    }
+  }
+
   private setupMiddleware() {
+    // Security headers
+    this.app.use(helmet());
+
+    // Rate limiting - 100 requests per 15 minutes per IP
+    const limiter = rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max: 100,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { error: 'Too many requests, please try again later.' }
+    });
+    this.app.use(limiter);
+
     if (this.config.cors) {
-    this.app.use(cors());
+      this.app.use(cors());
     }
     this.app.use(express.json());
   }
@@ -101,7 +163,7 @@ export class MockApiServer {
         }
 
         const responseBody = endpoint.response?.body || {};
-        const responseStatus = endpoint.statusCode || 200;
+        const responseStatus = endpoint.response?.status || 200;
 
         // Capture successful request log
         this.captureLog({
@@ -181,10 +243,28 @@ export class MockApiServer {
 
         ws.on('message', (message) => {
           try {
-            console.log(`Received message from client for project ${projectId}: ${message}`);
-            // Handle incoming messages if necessary (e.g., filtering requests)
+            const data = JSON.parse(message.toString());
+            console.log(`Received message from client for project ${projectId}:`, data);
+
+            // Handle WebSocket commands
+            if (data.command === 'getHistory') {
+              const limit = data.limit || 100;
+              const projectLogs = this.logs
+                .filter(log => log.projectId === projectId)
+                .slice(-limit);
+              ws.send(JSON.stringify({ type: 'history', logs: projectLogs }));
+            } else if (data.command === 'clearLogs') {
+              this.logs = this.logs.filter(log => log.projectId !== projectId);
+              this.saveLogs(projectId).catch(() => {});
+              ws.send(JSON.stringify({ type: 'cleared', message: 'Logs cleared' }));
+            } else if (data.command === 'ping') {
+              ws.send(JSON.stringify({ type: 'pong', timestamp: new Date() }));
+            } else {
+              ws.send(JSON.stringify({ type: 'error', message: 'Unknown command' }));
+            }
           } catch (error) {
             console.error(`Error handling message from client for project ${projectId}:`, error);
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid message format' }));
           }
         });
 
@@ -244,9 +324,12 @@ export class MockApiServer {
     });
   }
 
-  private captureLog(logEntry: LogEntry) {
+  private captureLog(logEntry: LogEntry): void {
     console.log('Captured log:', logEntry);
     this.logs.push(logEntry);
+
+    // Persist logs to disk (fire and forget - errors logged internally)
+    this.saveLogs(logEntry.projectId).catch(() => {});
 
     // Broadcast log to relevant clients
     const projectClients = this.clients.get(logEntry.projectId);
@@ -255,29 +338,29 @@ export class MockApiServer {
         try {
           let logMessage = '';
           try {
-            logMessage = JSON.stringify(logEntry);
+            logMessage = JSON.stringify({ type: 'log', ...logEntry });
           } catch (jsonError) {
             console.error(`Error stringifying log entry for project ${logEntry.projectId}:`, jsonError, logEntry);
-            // Send a basic error message to the client if stringification fails
             if (client.readyState === client.OPEN) {
-              client.send(JSON.stringify({ error: 'Could not serialize log entry' }));
+              client.send(JSON.stringify({ type: 'error', message: 'Could not serialize log entry' }));
             }
-            return; // Skip sending this log if it cannot be serialized
+            return;
           }
           if (client.readyState === client.OPEN) {
             client.send(logMessage);
           }
         } catch (error) {
           console.error(`Error sending log to WebSocket client for project ${logEntry.projectId}:`, error);
-          // Optionally remove the client if sending fails consistently
-          // This might require more sophisticated client management
         }
       });
     }
 
-    // Simple log cleanup (optional, to prevent memory growth in long-running process)
-    if (this.logs.length > 1000) {
-      this.logs.splice(0, this.logs.length - 1000);
+    // Cleanup old logs per project (keep last 1000 per project)
+    const projectLogs = this.logs.filter(log => log.projectId === logEntry.projectId);
+    if (projectLogs.length > 1000) {
+      const logsToRemove = projectLogs.slice(0, projectLogs.length - 1000);
+      this.logs = this.logs.filter(log => !logsToRemove.includes(log));
+      this.saveLogs(logEntry.projectId).catch(() => {});
     }
   }
 

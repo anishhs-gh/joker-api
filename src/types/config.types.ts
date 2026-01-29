@@ -1,8 +1,10 @@
-import { MockEndpoint } from './endpoint.types';
-
-export interface MockConfig {
-  endpoints: MockEndpoint[];
-  port?: number;
+export interface FirebaseConfig {
+  projectId: string;
+  // Optional: path to service account key file
+  serviceAccountKeyPath?: string;
+  // Optional: service account credentials object (parsed JSON)
+  serviceAccountCredentials?: object;
+  // If neither is provided, uses Application Default Credentials (ADC)
 }
 
 export interface ServerConfig {
@@ -11,8 +13,5 @@ export interface ServerConfig {
     origin: string;
     methods: string[];
   };
-  firebase: {
-    projectId: string;
-    serviceAccountKeyPath: string;
-  };
+  firebase: FirebaseConfig;
 } 
