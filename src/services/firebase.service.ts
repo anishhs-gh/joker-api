@@ -177,8 +177,8 @@ export class FirebaseService {
       throw new ProjectNotFoundError(projectId);
     }
 
-    // Delete all endpoints for this project
-    const endpoints = await this.getEndpoints(projectId, userId);
+    // Delete all endpoints for this project (use nameLower since that's how endpoints are stored)
+    const endpoints = await this.getEndpoints(project.nameLower, userId);
     const batch = this.db.batch();
 
     endpoints.forEach(endpoint => {
@@ -237,7 +237,16 @@ export class FirebaseService {
     const endpoints = snapshot.docs.map(doc => doc.data() as MockEndpoint);
 
     // Filter by access - return endpoints that are public or owned by user
-    return endpoints.filter(e => !e.userId || e.userId === userId);
+    const accessibleEndpoints = endpoints.filter(e => !e.userId || e.userId === userId);
+
+    // Sort to prioritize private (user-owned) endpoints over public ones
+    return accessibleEndpoints.sort((a, b) => {
+      const aIsPrivate = a.userId === userId && userId !== undefined;
+      const bIsPrivate = b.userId === userId && userId !== undefined;
+      if (aIsPrivate && !bIsPrivate) return -1;
+      if (!aIsPrivate && bIsPrivate) return 1;
+      return 0;
+    });
   }
 
   async updateEndpoint(projectId: string, endpointId: string, updates: UpdateEndpointRequest, userId?: string): Promise<MockEndpoint> {

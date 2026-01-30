@@ -34,7 +34,7 @@ export class EndpointService {
       throw new ProjectNotFoundError(projectId);
     }
 
-    return this.firebaseService.getEndpoints(projectId, userId);
+    return this.firebaseService.getEndpoints(project.nameLower, userId);
   }
 
   async updateEndpoint(projectId: string, endpointId: string, updates: UpdateEndpointRequest, userId?: string): Promise<MockEndpoint> {

@@ -169,7 +169,8 @@ export class MockApiServer {
       const requestHeaders = this.sanitizeHeaders(req.headers as Record<string, string>);
 
       try {
-        const endpoints = await this.endpointService.getEndpoints(projectId);
+        const userId = req.user?.uid;
+        const endpoints = await this.endpointService.getEndpoints(projectId, userId);
         const endpoint = endpoints.find(e => e.path === reqPath && e.method === method);
 
         if (!endpoint) {
