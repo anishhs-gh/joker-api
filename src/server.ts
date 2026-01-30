@@ -12,15 +12,20 @@ import { ServerConfig } from './types/config.types';
 import { FirebaseService } from './services/firebase.service';
 import { ProjectService } from './services/project.service';
 import { EndpointService } from './services/endpoint.service';
+import { AuthService } from './services/auth.service';
 import { ProjectController } from './controllers/project.controller';
 import { EndpointController } from './controllers/endpoint.controller';
+import { AuthController } from './controllers/auth.controller';
+import { createAuthMiddleware, requireAuth } from './middleware/auth.middleware';
 import { ProjectNotFoundError } from './types/error.types';
+import logger from './utils/logger';
 
 interface LogEntry {
   timestamp: Date;
   method: string;
   path: string;
   projectId: string;
+  requestHeaders: Record<string, string>;
   requestBody: any;
   responseStatus: number;
   responseBody: any;
@@ -34,8 +39,10 @@ export class MockApiServer {
   private firebaseService: FirebaseService;
   private projectService: ProjectService;
   private endpointService: EndpointService;
+  private authService: AuthService | null = null;
   private projectController: ProjectController;
   private endpointController: EndpointController;
+  private authController: AuthController | null = null;
 
   // Log storage with file persistence
   private logs: LogEntry[] = [];
@@ -51,6 +58,15 @@ export class MockApiServer {
     this.endpointService = new EndpointService(this.firebaseService);
     this.projectController = new ProjectController(this.projectService);
     this.endpointController = new EndpointController(this.endpointService);
+
+    // Initialize auth service if Firebase Web API key is provided
+    if (config.firebaseWebApiKey) {
+      this.authService = new AuthService(config.firebaseWebApiKey);
+      this.authController = new AuthController(this.authService);
+      logger.info('Firebase Auth enabled');
+    } else {
+      logger.info('Firebase Auth disabled (FIREBASE_WEB_API_KEY not set)');
+    }
 
     this.ensureLogsDirectory();
     this.loadLogs();
@@ -83,9 +99,9 @@ export class MockApiServer {
           timestamp: new Date(log.timestamp)
         })));
       }
-      console.log(`Loaded ${this.logs.length} logs from disk`);
+      logger.info('Logs loaded from disk', { count: this.logs.length });
     } catch (error) {
-      console.error('Error loading logs from disk:', error);
+      logger.error('Error loading logs from disk', { error: (error as Error).message });
     }
   }
 
@@ -95,7 +111,7 @@ export class MockApiServer {
       const filePath = this.getLogFilePath(projectId);
       await fsPromises.writeFile(filePath, JSON.stringify(projectLogs, null, 2));
     } catch (error) {
-      console.error(`Error saving logs for project ${projectId}:`, error);
+      logger.error('Error saving logs for project', { projectId, error: (error as Error).message });
     }
   }
 
@@ -117,9 +133,20 @@ export class MockApiServer {
       this.app.use(cors());
     }
     this.app.use(express.json());
+
+    // Auth middleware - attaches req.user if token is valid
+    this.app.use(createAuthMiddleware(this.authService));
   }
 
   private setupRoutes() {
+    // Auth routes (only if auth is configured)
+    if (this.authController) {
+      this.app.post('/_mock-api/auth/signup', (req, res) => this.authController!.signup(req, res));
+      this.app.post('/_mock-api/auth/login', (req, res) => this.authController!.login(req, res));
+      this.app.get('/_mock-api/auth/me', requireAuth, (req, res) => this.authController!.getCurrentUser(req, res));
+      logger.info('Auth routes registered at /_mock-api/auth/*');
+    }
+
     // Control plane routes (projects and endpoints)
     this.app.post('/_mock-api/projects', (req, res) => this.projectController.createProject(req, res));
     this.app.get('/_mock-api/projects', (req, res) => this.projectController.listProjects(req, res));
@@ -135,14 +162,15 @@ export class MockApiServer {
     // Mock endpoint handler (should be defined after control plane routes)
     this.app.all('/:projectId/*', async (req, res) => {
       const { projectId } = req.params;
-      const path = req.path.replace(`/${projectId}`, '');
+      const reqPath = req.path.replace(`/${projectId}`, '');
       const method = req.method;
 
-      const start = Date.now();
+      // Capture request headers (sanitize sensitive ones)
+      const requestHeaders = this.sanitizeHeaders(req.headers as Record<string, string>);
 
       try {
         const endpoints = await this.endpointService.getEndpoints(projectId);
-        const endpoint = endpoints.find(e => e.path === path && e.method === method);
+        const endpoint = endpoints.find(e => e.path === reqPath && e.method === method);
 
         if (!endpoint) {
           // Capture log for 404s on mock endpoints as well
@@ -151,6 +179,7 @@ export class MockApiServer {
             method,
             path: req.path,
             projectId,
+            requestHeaders,
             requestBody: req.body,
             responseStatus: 404,
             responseBody: { error: 'Endpoint not found' },
@@ -171,11 +200,13 @@ export class MockApiServer {
           method,
           path: req.path,
           projectId,
+          requestHeaders,
           requestBody: req.body,
           responseStatus,
           responseBody,
         });
 
+        logger.debug('Mock endpoint request', { method, path: reqPath, projectId, responseStatus });
         res.status(responseStatus).json(responseBody);
       } catch (error) {
         const errorStatus = error instanceof ProjectNotFoundError ? 404 : 500;
@@ -187,10 +218,13 @@ export class MockApiServer {
           method,
           path: req.path,
           projectId,
+          requestHeaders,
           requestBody: req.body,
           responseStatus: errorStatus,
           responseBody: { message: errorMessage },
         });
+
+        logger.error('Mock endpoint error', { method, path: reqPath, projectId, error: errorMessage });
 
         if (error instanceof ProjectNotFoundError) {
           return res.status(404).json({ message: errorMessage });
@@ -200,32 +234,41 @@ export class MockApiServer {
     });
   }
 
+  private sanitizeHeaders(headers: Record<string, string>): Record<string, string> {
+    const sanitized = { ...headers };
+    // Remove sensitive headers
+    delete sanitized['authorization'];
+    delete sanitized['cookie'];
+    delete sanitized['set-cookie'];
+    delete sanitized['x-api-key'];
+    return sanitized;
+  }
+
   private setupWebSocket() {
     if (!this.httpServer) {
-      console.error('HTTP server not initialized. Cannot set up WebSocket.');
+      logger.error('HTTP server not initialized. Cannot set up WebSocket.');
       return;
     }
 
-    console.log('Attempting to create WebSocket server...');
+    logger.debug('Creating WebSocket server...');
     this.wss = new WebSocketServer({ server: this.httpServer, path: '/ws/logs' });
-    console.log('WebSocket server created.');
+    logger.debug('WebSocket server created');
 
     this.wss.on('connection', (ws: WebSocket, req) => {
-      console.log('WebSocket client connected - handler started.');
+      logger.debug('WebSocket client connection initiated');
       try {
         // Extract projectId from request URL, e.g., /ws/logs?projectId=YOUR_PROJECT_ID
         const urlParams = new URLSearchParams(req.url?.split('?')[1] || '');
         const projectId = urlParams.get('projectId');
 
         if (!projectId) {
-          console.log('WebSocket connection rejected: No projectId provided');
+          logger.warn('WebSocket connection rejected: No projectId provided');
           ws.send(JSON.stringify({ error: 'projectId is required' }));
           ws.close(1008, 'projectId required');
           return;
         }
 
-        console.log(`WebSocket client connected for project: ${projectId}`);
-        console.log('Reached point after projectId log in connection handler.');
+        logger.info('WebSocket client connected', { projectId });
 
         // Store client by project ID
         if (!this.clients.has(projectId)) {
@@ -236,15 +279,14 @@ export class MockApiServer {
         // Send a confirmation or initial data if needed
         try {
           ws.send(JSON.stringify({ message: `Connected to logs for project ${projectId}` }));
-          console.log('Sent initial connection confirmation.');
         } catch (sendError) {
-          console.error(`Error sending initial confirmation to client for project ${projectId}:`, sendError);
+          logger.error('Error sending initial confirmation to WebSocket client', { projectId, error: (sendError as Error).message });
         }
 
         ws.on('message', (message) => {
           try {
             const data = JSON.parse(message.toString());
-            console.log(`Received message from client for project ${projectId}:`, data);
+            logger.debug('WebSocket message received', { projectId, command: data.command });
 
             // Handle WebSocket commands
             if (data.command === 'getHistory') {
@@ -263,14 +305,14 @@ export class MockApiServer {
               ws.send(JSON.stringify({ type: 'error', message: 'Unknown command' }));
             }
           } catch (error) {
-            console.error(`Error handling message from client for project ${projectId}:`, error);
+            logger.error('Error handling WebSocket message', { projectId, error: (error as Error).message });
             ws.send(JSON.stringify({ type: 'error', message: 'Invalid message format' }));
           }
         });
 
         ws.on('close', () => {
           try {
-            console.log(`WebSocket client disconnected for project: ${projectId}`);
+            logger.info('WebSocket client disconnected', { projectId });
             // Remove client from the map
             const projectClients = this.clients.get(projectId);
             if (projectClients) {
@@ -283,19 +325,15 @@ export class MockApiServer {
               }
             }
           } catch (error) {
-            console.error(`Error handling WebSocket close for project ${projectId}:`, error);
+            logger.error('Error handling WebSocket close', { projectId, error: (error as Error).message });
           }
         });
 
         ws.on('error', (error) => {
-          try {
-            console.error(`WebSocket error for project ${projectId}:`, error);
-          } catch (err) {
-            console.error(`Error logging WebSocket error for project ${projectId}:`, err);
-          }
+          logger.error('WebSocket error', { projectId, error: error.message });
         });
       } catch (error) {
-        console.error('Error handling initial WebSocket connection setup:', error);
+        logger.error('Error in WebSocket connection setup', { error: (error as Error).message });
         if (ws.readyState === ws.OPEN) {
           ws.close(1011, 'Internal server error');
         }
@@ -303,29 +341,27 @@ export class MockApiServer {
     });
 
     this.wss.on('listening', () => {
-      console.log('WebSocket server listening');
+      logger.info('WebSocket server listening');
     });
 
     this.wss.on('error', (error) => {
-      console.error('WebSocket server error during setup:', error);
+      logger.error('WebSocket server error', { error: error.message });
     });
   }
 
   private setupErrorHandling() {
     process.on('unhandledRejection', (reason, promise) => {
-      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-      // Optionally, take action like shutting down the server gracefully
+      logger.error('Unhandled Rejection', { reason: String(reason) });
     });
 
     process.on('uncaughtException', (error) => {
-      console.error('Uncaught Exception:', error);
-      // Optionally, take action like shutting down the server gracefully
-      process.exit(1); // Exit the process after logging uncaught exception
+      logger.error('Uncaught Exception', { error: error.message, stack: error.stack });
+      process.exit(1);
     });
   }
 
   private captureLog(logEntry: LogEntry): void {
-    console.log('Captured log:', logEntry);
+    logger.debug('Log captured', { method: logEntry.method, path: logEntry.path, projectId: logEntry.projectId, status: logEntry.responseStatus });
     this.logs.push(logEntry);
 
     // Persist logs to disk (fire and forget - errors logged internally)
@@ -340,7 +376,7 @@ export class MockApiServer {
           try {
             logMessage = JSON.stringify({ type: 'log', ...logEntry });
           } catch (jsonError) {
-            console.error(`Error stringifying log entry for project ${logEntry.projectId}:`, jsonError, logEntry);
+            logger.error('Error stringifying log entry', { projectId: logEntry.projectId, error: (jsonError as Error).message });
             if (client.readyState === client.OPEN) {
               client.send(JSON.stringify({ type: 'error', message: 'Could not serialize log entry' }));
             }
@@ -350,7 +386,7 @@ export class MockApiServer {
             client.send(logMessage);
           }
         } catch (error) {
-          console.error(`Error sending log to WebSocket client for project ${logEntry.projectId}:`, error);
+          logger.error('Error sending log to WebSocket client', { projectId: logEntry.projectId, error: (error as Error).message });
         }
       });
     }
@@ -367,7 +403,7 @@ export class MockApiServer {
   public async start() {
     return new Promise<void>((resolve) => {
       this.httpServer = this.app.listen(this.config.port, () => {
-        console.log(`HTTP server is running on port ${this.config.port}`);
+        logger.info('HTTP server started', { port: this.config.port });
         this.setupWebSocket(); // Setup WebSocket after HTTP server starts
         resolve();
       });
@@ -377,13 +413,13 @@ export class MockApiServer {
   public stop() {
     if (this.httpServer) {
       this.httpServer.close(() => {
-        console.log('HTTP server closed');
+        logger.info('HTTP server closed');
       });
     }
     if (this.wss) {
       this.wss.close(() => {
-        console.log('WebSocket server closed');
+        logger.info('WebSocket server closed');
       });
     }
   }
-} 
+}

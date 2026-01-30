@@ -11,6 +11,7 @@ export interface MockEndpoint {
     headers?: Record<string, string>;
   };
   delay?: number;
+  userId?: string;  // Inherited from project
   createdAt: number;
   updatedAt: number;
 }

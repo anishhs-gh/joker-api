@@ -31,8 +31,8 @@ describe('ProjectService', () => {
 
       const result = await projectService.createProject('Test Project');
 
-      expect(mockFirebaseService.getProjectByName).toHaveBeenCalledWith('test project');
-      expect(mockFirebaseService.createProject).toHaveBeenCalledWith('Test Project');
+      expect(mockFirebaseService.getProjectByName).toHaveBeenCalledWith('test project', undefined);
+      expect(mockFirebaseService.createProject).toHaveBeenCalledWith('Test Project', undefined);
       expect(result).toEqual(mockProject);
     });
 
@@ -51,7 +51,7 @@ describe('ProjectService', () => {
 
       const result = await projectService.getProjectById('project-123');
 
-      expect(mockFirebaseService.getProject).toHaveBeenCalledWith('project-123');
+      expect(mockFirebaseService.getProject).toHaveBeenCalledWith('project-123', undefined);
       expect(result).toEqual(mockProject);
     });
 
@@ -111,7 +111,7 @@ describe('ProjectService', () => {
 
       await projectService.deleteProject('project-123');
 
-      expect(mockFirebaseService.deleteProject).toHaveBeenCalledWith('project-123');
+      expect(mockFirebaseService.deleteProject).toHaveBeenCalledWith('project-123', undefined);
     });
 
     it('should throw ProjectNotFoundError when project does not exist', async () => {

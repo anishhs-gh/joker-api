@@ -3,6 +3,7 @@ export interface Project {
   name: string;
   nameLower: string;
   description?: string;
+  userId?: string;  // Owner's Firebase UID (null/undefined = public)
   createdAt: number;
   updatedAt: number;
 }

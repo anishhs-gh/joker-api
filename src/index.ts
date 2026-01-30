@@ -1,6 +1,8 @@
+import 'dotenv/config';
 import path from 'path';
 import { MockApiServer } from './server';
 import { ServerConfig, FirebaseConfig } from './types/config.types';
+import logger from './utils/logger';
 
 // Build Firebase config with flexible credential loading
 function buildFirebaseConfig(): FirebaseConfig {
@@ -12,7 +14,7 @@ function buildFirebaseConfig(): FirebaseConfig {
       const credentials = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_CREDENTIALS);
       return { projectId, serviceAccountCredentials: credentials };
     } catch (error) {
-      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT_CREDENTIALS:', error);
+      logger.error('Failed to parse FIREBASE_SERVICE_ACCOUNT_CREDENTIALS', { error: (error as Error).message });
     }
   }
 
@@ -44,14 +46,15 @@ const config: ServerConfig = {
     origin: process.env.CORS_ORIGIN || '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
   },
-  firebase: buildFirebaseConfig()
+  firebase: buildFirebaseConfig(),
+  firebaseWebApiKey: process.env.FIREBASE_WEB_API_KEY
 };
 
 const server = new MockApiServer(config);
 
 // Graceful shutdown handling
 const shutdown = () => {
-  console.log('Received shutdown signal, closing server...');
+  logger.info('Received shutdown signal, closing server...');
   server.stop();
   process.exit(0);
 };
@@ -60,6 +63,6 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 server.start().catch(error => {
-  console.error('Failed to start server:', error);
+  logger.error('Failed to start server', { error: (error as Error).message });
   process.exit(1);
-}); 
+});

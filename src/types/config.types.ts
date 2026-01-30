@@ -14,4 +14,5 @@ export interface ServerConfig {
     methods: string[];
   };
   firebase: FirebaseConfig;
+  firebaseWebApiKey?: string;  // For Firebase Auth REST API
 } 

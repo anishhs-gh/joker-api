@@ -151,7 +151,7 @@ describe('EndpointService', () => {
 
       await endpointService.deleteEndpoint('project-123', 'endpoint-123');
 
-      expect(mockFirebaseService.deleteEndpoint).toHaveBeenCalledWith('project-123', 'endpoint-123');
+      expect(mockFirebaseService.deleteEndpoint).toHaveBeenCalledWith('project-123', 'endpoint-123', undefined);
     });
 
     it('should throw ProjectNotFoundError when project does not exist', async () => {

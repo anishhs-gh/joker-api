@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { ProjectService } from '../services/project.service';
 import { CreateProjectRequest, UpdateProjectRequest } from '../types/project.types';
 import { ValidationError } from '../types/error.types';
+import logger from '../utils/logger';
 
 export class ProjectController {
   private projectService: ProjectService;
@@ -13,12 +14,14 @@ export class ProjectController {
   async createProject(req: Request, res: Response) {
     try {
       const { name } = req.body as CreateProjectRequest;
+      const userId = req.user?.uid;
 
       if (!name) {
         throw new ValidationError('Project name is required');
       }
 
-      const project = await this.projectService.createProject(name);
+      const project = await this.projectService.createProject(name, userId);
+      logger.info('Project created via API', { projectId: project.id, name, userId });
       res.status(201).json(project);
     } catch (error) {
       this.handleError(error, res);
@@ -27,7 +30,8 @@ export class ProjectController {
 
   async listProjects(req: Request, res: Response) {
     try {
-      const projects = await this.projectService.listProjects();
+      const userId = req.user?.uid;
+      const projects = await this.projectService.listProjects(userId);
       res.json(projects);
     } catch (error) {
       this.handleError(error, res);
@@ -36,8 +40,10 @@ export class ProjectController {
 
   async getProjectById(req: Request, res: Response) {
     const { projectId } = req.params;
+    const userId = req.user?.uid;
+
     try {
-      const project = await this.projectService.getProjectById(projectId);
+      const project = await this.projectService.getProjectById(projectId, userId);
       res.json(project);
     } catch (error) {
       this.handleError(error, res);
@@ -47,9 +53,10 @@ export class ProjectController {
   async updateProject(req: Request, res: Response) {
     const { projectId } = req.params;
     const updates = req.body as UpdateProjectRequest;
+    const userId = req.user?.uid;
 
     try {
-      const project = await this.projectService.updateProject(projectId, updates);
+      const project = await this.projectService.updateProject(projectId, updates, userId);
       res.json(project);
     } catch (error) {
       this.handleError(error, res);
@@ -58,9 +65,10 @@ export class ProjectController {
 
   async deleteProject(req: Request, res: Response) {
     const { projectId } = req.params;
+    const userId = req.user?.uid;
 
     try {
-      await this.projectService.deleteProject(projectId);
+      await this.projectService.deleteProject(projectId, userId);
       res.json({ message: 'Project deleted successfully' });
     } catch (error) {
       this.handleError(error, res);
@@ -68,6 +76,8 @@ export class ProjectController {
   }
 
   private handleError(error: any, res: Response) {
+    logger.error('Project controller error', { error: error.message });
+
     if (error instanceof ValidationError) {
       return res.status(400).json({ error: error.message });
     }
@@ -79,4 +89,4 @@ export class ProjectController {
     }
     res.status(500).json({ error: 'Internal server error' });
   }
-} 
+}
