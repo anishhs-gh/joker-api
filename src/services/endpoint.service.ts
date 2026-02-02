@@ -10,13 +10,13 @@ export class EndpointService {
     this.firebaseService = firebaseService;
   }
 
-  async createEndpoint(data: CreateEndpointRequest): Promise<MockEndpoint> {
-    const project = await this.firebaseService.getProject(data.projectId);
+  async createEndpoint(data: CreateEndpointRequest, userId?: string): Promise<MockEndpoint> {
+    const project = await this.firebaseService.getProject(data.projectId, userId);
     if (!project) {
       throw new ProjectNotFoundError(data.projectId);
     }
 
-    const existingEndpoints = await this.firebaseService.getEndpoints(data.projectId);
+    const existingEndpoints = await this.firebaseService.getEndpoints(data.projectId, userId);
     const existingEndpoint = existingEndpoints.find(
       (e: MockEndpoint) => e.path === data.path && e.method === data.method
     );
@@ -25,25 +25,25 @@ export class EndpointService {
       throw new EndpointAlreadyExistsError(data.path, data.method);
     }
 
-    return this.firebaseService.createEndpoint(data);
+    return this.firebaseService.createEndpoint(data, userId);
   }
 
-  async getEndpoints(projectId: string): Promise<MockEndpoint[]> {
-    const project = await this.firebaseService.getProject(projectId);
+  async getEndpoints(projectId: string, userId?: string): Promise<MockEndpoint[]> {
+    const project = await this.firebaseService.getProject(projectId, userId);
     if (!project) {
       throw new ProjectNotFoundError(projectId);
     }
 
-    return this.firebaseService.getEndpoints(projectId);
+    return this.firebaseService.getEndpoints(project.nameLower, userId);
   }
 
-  async updateEndpoint(projectId: string, endpointId: string, updates: UpdateEndpointRequest): Promise<MockEndpoint> {
-    const project = await this.firebaseService.getProject(projectId);
+  async updateEndpoint(projectId: string, endpointId: string, updates: UpdateEndpointRequest, userId?: string): Promise<MockEndpoint> {
+    const project = await this.firebaseService.getProject(projectId, userId);
     if (!project) {
       throw new ProjectNotFoundError(projectId);
     }
 
-    const endpoints = await this.firebaseService.getEndpoints(projectId);
+    const endpoints = await this.firebaseService.getEndpoints(projectId, userId);
     const endpoint = endpoints.find((e: MockEndpoint) => e.id === endpointId);
     if (!endpoint) {
       throw new EndpointNotFoundError(endpointId);
@@ -61,21 +61,21 @@ export class EndpointService {
       }
     }
 
-    return this.firebaseService.updateEndpoint(projectId, endpointId, updates);
+    return this.firebaseService.updateEndpoint(projectId, endpointId, updates, userId);
   }
 
-  async deleteEndpoint(projectId: string, endpointId: string): Promise<void> {
-    const project = await this.firebaseService.getProject(projectId);
+  async deleteEndpoint(projectId: string, endpointId: string, userId?: string): Promise<void> {
+    const project = await this.firebaseService.getProject(projectId, userId);
     if (!project) {
       throw new ProjectNotFoundError(projectId);
     }
 
-    const endpoints = await this.firebaseService.getEndpoints(projectId);
+    const endpoints = await this.firebaseService.getEndpoints(projectId, userId);
     const endpoint = endpoints.find((e: MockEndpoint) => e.id === endpointId);
     if (!endpoint) {
       throw new EndpointNotFoundError(endpointId);
     }
 
-    await this.firebaseService.deleteEndpoint(projectId, endpointId);
+    await this.firebaseService.deleteEndpoint(projectId, endpointId, userId);
   }
-} 
+}

@@ -58,7 +58,6 @@
     "sourceMap": true,
     // "inlineSourceMap": true,
     "noEmit": false,
-    "outFile": "./",
     "outDir": "./dist",
     "removeComments": true,
     // "declaration": true,                              /* Generate .d.ts files from TypeScript and JavaScript files in your project. */

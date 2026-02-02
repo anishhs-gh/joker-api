@@ -3,8 +3,9 @@ export interface Project {
   name: string;
   nameLower: string;
   description?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  userId?: string;  // Owner's Firebase UID (null/undefined = public)
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface CreateProjectRequest {

@@ -1,5 +1,5 @@
 import { Project } from '../types';
-import { CreateProjectRequest, UpdateProjectRequest } from '../types/project.types';
+import { UpdateProjectRequest } from '../types/project.types';
 import { ProjectNotFoundError, ProjectAlreadyExistsError } from '../types/error.types';
 import { FirebaseService } from './firebase.service';
 
@@ -10,49 +10,49 @@ export class ProjectService {
     this.firebaseService = firebaseService;
   }
 
-  async createProject(name: string): Promise<Project> {
-    const existingProject = await this.firebaseService.getProjectByName(name.toLowerCase());
+  async createProject(name: string, userId?: string): Promise<Project> {
+    const existingProject = await this.firebaseService.getProjectByName(name.toLowerCase(), userId);
     if (existingProject) {
       throw new ProjectAlreadyExistsError(name);
     }
 
-    return this.firebaseService.createProject(name);
+    return this.firebaseService.createProject(name, userId);
   }
 
-  async listProjects(): Promise<Project[]> {
-    return this.firebaseService.listProjects();
+  async listProjects(userId?: string): Promise<Project[]> {
+    return this.firebaseService.listProjects(userId);
   }
 
-  async getProjectById(projectId: string): Promise<Project> {
-    const project = await this.firebaseService.getProject(projectId);
+  async getProjectById(projectId: string, userId?: string): Promise<Project> {
+    const project = await this.firebaseService.getProject(projectId, userId);
     if (!project) {
       throw new ProjectNotFoundError(projectId);
     }
     return project;
   }
 
-  async updateProject(projectId: string, updates: UpdateProjectRequest): Promise<Project> {
-    const project = await this.firebaseService.getProject(projectId);
+  async updateProject(projectId: string, updates: UpdateProjectRequest, userId?: string): Promise<Project> {
+    const project = await this.firebaseService.getProject(projectId, userId);
     if (!project) {
       throw new ProjectNotFoundError(projectId);
     }
 
     if (updates.name) {
-      const existingProject = await this.firebaseService.getProjectByName(updates.name.toLowerCase());
+      const existingProject = await this.firebaseService.getProjectByName(updates.name.toLowerCase(), userId);
       if (existingProject && existingProject.id !== projectId) {
         throw new ProjectAlreadyExistsError(updates.name);
       }
     }
 
-    return this.firebaseService.updateProject(projectId, updates);
+    return this.firebaseService.updateProject(projectId, updates, userId);
   }
 
-  async deleteProject(projectId: string): Promise<void> {
-    const project = await this.firebaseService.getProject(projectId);
+  async deleteProject(projectId: string, userId?: string): Promise<void> {
+    const project = await this.firebaseService.getProject(projectId, userId);
     if (!project) {
       throw new ProjectNotFoundError(projectId);
     }
 
-    await this.firebaseService.deleteProject(projectId);
+    await this.firebaseService.deleteProject(projectId, userId);
   }
-} 
+}
