@@ -95,6 +95,9 @@ export class MockApiServer {
       this.app.post('/_mock-api/auth/signup', (req, res) => this.authController!.signup(req, res));
       this.app.post('/_mock-api/auth/login', (req, res) => this.authController!.login(req, res));
       this.app.get('/_mock-api/auth/me', requireAuth, (req, res) => this.authController!.getCurrentUser(req, res));
+      this.app.post('/_mock-api/auth/verify-email/resend', (req, res) => this.authController!.resendVerificationEmail(req, res));
+      this.app.post('/_mock-api/auth/password/reset', (req, res) => this.authController!.resetPassword(req, res));
+      this.app.post('/_mock-api/auth/password/update', (req, res) => this.authController!.updatePassword(req, res));
       this.app.post('/_mock-api/auth/token/regenerate', requireFullAuth, (req, res) => this.authController!.regenerateToken(req, res));
       logger.info('Auth routes registered at /_mock-api/auth/*');
     }

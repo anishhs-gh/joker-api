@@ -127,6 +127,9 @@ export class AuthService {
     // Create user record with API token
     const { userRecord, apiToken } = await this.createUserRecord(data.localId, email, name);
 
+    // Send verification email
+    await this.sendVerificationEmail(data.idToken);
+
     logger.info('User signed up successfully', { email, uid: data.localId, name });
     return { ...data as FirebaseAuthResponse, apiToken, name, avatarColor: userRecord.avatarColor };
   }
@@ -182,6 +185,83 @@ export class AuthService {
       logger.error('Failed to get user by ID', { uid, error: (error as Error).message });
       return null;
     }
+  }
+
+  async isEmailVerified(uid: string): Promise<boolean> {
+    try {
+      const userRecord = await admin.auth().getUser(uid);
+      return userRecord.emailVerified;
+    } catch (error) {
+      logger.error('Failed to check email verification', { uid, error: (error as Error).message });
+      return false;
+    }
+  }
+
+  async sendVerificationEmail(idToken: string): Promise<void> {
+    const url = `${FIREBASE_AUTH_API_URL}:sendOobCode?key=${this.webApiKey}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestType: 'VERIFY_EMAIL',
+        idToken,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json() as FirebaseAuthError;
+      logger.error('Failed to send verification email', { error: error.error.message });
+      throw new Error(this.mapFirebaseError(error.error.message));
+    }
+
+    logger.info('Verification email sent');
+  }
+
+  async sendPasswordResetEmail(email: string): Promise<void> {
+    const url = `${FIREBASE_AUTH_API_URL}:sendOobCode?key=${this.webApiKey}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestType: 'PASSWORD_RESET',
+        email,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json() as FirebaseAuthError;
+      logger.error('Failed to send password reset email', { email, error: error.error.message });
+      throw new Error(this.mapFirebaseError(error.error.message));
+    }
+
+    logger.info('Password reset email sent', { email });
+  }
+
+  async updatePassword(idToken: string, newPassword: string): Promise<FirebaseAuthResponse> {
+    const url = `${FIREBASE_AUTH_API_URL}:update?key=${this.webApiKey}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idToken,
+        password: newPassword,
+        returnSecureToken: true,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      const error = data as FirebaseAuthError;
+      logger.error('Failed to update password', { error: error.error.message });
+      throw new Error(this.mapFirebaseError(error.error.message));
+    }
+
+    logger.info('Password updated successfully');
+    return data as FirebaseAuthResponse;
   }
 
   private mapFirebaseError(errorCode: string): string {

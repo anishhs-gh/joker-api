@@ -30,7 +30,7 @@ export class AuthController {
       const result = await this.authService.signup(email, password, name.trim());
 
       res.status(201).json({
-        message: 'Account created successfully',
+        message: 'Account created successfully. Please verify your email.',
         idToken: result.idToken,
         refreshToken: result.refreshToken,
         expiresIn: result.expiresIn,
@@ -39,6 +39,7 @@ export class AuthController {
         name: result.name,
         avatarColor: result.avatarColor,
         apiToken: result.apiToken,
+        emailVerified: false,
       });
     } catch (error) {
       this.handleError(error, res);
@@ -55,8 +56,11 @@ export class AuthController {
 
       const result = await this.authService.login(email, password);
 
-      // Get user record for additional info
-      const userRecord = await this.authService.getUserRecord(result.localId);
+      // Get user record and email verification status
+      const [userRecord, emailVerified] = await Promise.all([
+        this.authService.getUserRecord(result.localId),
+        this.authService.isEmailVerified(result.localId),
+      ]);
 
       res.json({
         idToken: result.idToken,
@@ -67,6 +71,7 @@ export class AuthController {
         name: userRecord?.name,
         avatarColor: userRecord?.avatarColor,
         hasApiToken: !!userRecord?.apiTokenHash,
+        emailVerified,
       });
     } catch (error) {
       this.handleError(error, res);
@@ -79,13 +84,17 @@ export class AuthController {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const userRecord = await this.authService.getUserRecord(req.user.uid);
+      const [userRecord, emailVerified] = await Promise.all([
+        this.authService.getUserRecord(req.user.uid),
+        this.authService.isEmailVerified(req.user.uid),
+      ]);
 
       if (!userRecord) {
         // Fallback to basic info if no user record exists
         return res.json({
           uid: req.user.uid,
           email: req.user.email,
+          emailVerified,
         });
       }
 
@@ -95,6 +104,68 @@ export class AuthController {
         name: userRecord.name,
         avatarColor: userRecord.avatarColor,
         apiTokenCreatedAt: userRecord.apiTokenCreatedAt,
+        emailVerified,
+      });
+    } catch (error) {
+      this.handleError(error, res);
+    }
+  }
+
+  async resendVerificationEmail(req: Request, res: Response) {
+    try {
+      const { idToken } = req.body;
+
+      if (!idToken) {
+        throw new ValidationError('idToken is required');
+      }
+
+      await this.authService.sendVerificationEmail(idToken);
+
+      res.json({
+        message: 'Verification email sent successfully',
+      });
+    } catch (error) {
+      this.handleError(error, res);
+    }
+  }
+
+  async resetPassword(req: Request, res: Response) {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        throw new ValidationError('Email is required');
+      }
+
+      await this.authService.sendPasswordResetEmail(email);
+
+      res.json({
+        message: 'Password reset email sent successfully',
+      });
+    } catch (error) {
+      this.handleError(error, res);
+    }
+  }
+
+  async updatePassword(req: Request, res: Response) {
+    try {
+      const { idToken, newPassword } = req.body;
+
+      if (!idToken || !newPassword) {
+        throw new ValidationError('idToken and newPassword are required');
+      }
+
+      if (newPassword.length < 6) {
+        throw new ValidationError('Password must be at least 6 characters');
+      }
+
+      const result = await this.authService.updatePassword(idToken, newPassword);
+
+      res.json({
+        message: 'Password updated successfully',
+        idToken: result.idToken,
+        refreshToken: result.refreshToken,
+        expiresIn: result.expiresIn,
       });
     } catch (error) {
       this.handleError(error, res);
