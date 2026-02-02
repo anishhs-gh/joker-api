@@ -288,4 +288,51 @@ export class FirebaseService {
     await this.db.collection('endpoints').doc(endpointId).delete();
     logger.info('Endpoint deleted', { endpointId, projectId });
   }
+
+  // Log operations
+  async saveLog(logEntry: {
+    timestamp: Date;
+    method: string;
+    path: string;
+    projectId: string;
+    requestHeaders: Record<string, string>;
+    requestBody: any;
+    responseStatus: number;
+    responseBody: any;
+  }): Promise<string> {
+    const docRef = await this.db.collection('logs').add({
+      ...logEntry,
+      timestamp: logEntry.timestamp.getTime(),
+    });
+    return docRef.id;
+  }
+
+  async getLogs(projectId: string, limit: number = 100): Promise<any[]> {
+    const snapshot = await this.db.collection('logs')
+      .where('projectId', '==', projectId)
+      .orderBy('timestamp', 'desc')
+      .limit(limit)
+      .get();
+
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      timestamp: new Date(doc.data().timestamp),
+    })).reverse();
+  }
+
+  async clearLogs(projectId: string): Promise<number> {
+    const snapshot = await this.db.collection('logs')
+      .where('projectId', '==', projectId)
+      .get();
+
+    const batch = this.db.batch();
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+
+    await batch.commit();
+    logger.info('Logs cleared', { projectId, count: snapshot.size });
+    return snapshot.size;
+  }
 }

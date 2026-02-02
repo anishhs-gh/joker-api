@@ -13,17 +13,21 @@ export class AuthController {
 
   async signup(req: Request, res: Response) {
     try {
-      const { email, password } = req.body as SignupRequest;
+      const { email, password, name } = req.body as SignupRequest;
 
-      if (!email || !password) {
-        throw new ValidationError('Email and password are required');
+      if (!email || !password || !name) {
+        throw new ValidationError('Email, password, and name are required');
+      }
+
+      if (name.trim().length < 2) {
+        throw new ValidationError('Name must be at least 2 characters');
       }
 
       if (password.length < 6) {
         throw new ValidationError('Password must be at least 6 characters');
       }
 
-      const result = await this.authService.signup(email, password);
+      const result = await this.authService.signup(email, password, name.trim());
 
       res.status(201).json({
         message: 'Account created successfully',
@@ -32,6 +36,9 @@ export class AuthController {
         expiresIn: result.expiresIn,
         email: result.email,
         uid: result.localId,
+        name: result.name,
+        avatarColor: result.avatarColor,
+        apiToken: result.apiToken,
       });
     } catch (error) {
       this.handleError(error, res);
@@ -48,12 +55,18 @@ export class AuthController {
 
       const result = await this.authService.login(email, password);
 
+      // Get user record for additional info
+      const userRecord = await this.authService.getUserRecord(result.localId);
+
       res.json({
         idToken: result.idToken,
         refreshToken: result.refreshToken,
         expiresIn: result.expiresIn,
         email: result.email,
         uid: result.localId,
+        name: userRecord?.name,
+        avatarColor: userRecord?.avatarColor,
+        hasApiToken: !!userRecord?.apiTokenHash,
       });
     } catch (error) {
       this.handleError(error, res);
@@ -66,15 +79,63 @@ export class AuthController {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const user = await this.authService.getUserById(req.user.uid);
+      const userRecord = await this.authService.getUserRecord(req.user.uid);
 
-      if (!user) {
-        return res.status(404).json({ error: 'User not found' });
+      if (!userRecord) {
+        // Fallback to basic info if no user record exists
+        return res.json({
+          uid: req.user.uid,
+          email: req.user.email,
+        });
       }
 
       res.json({
-        uid: user.uid,
-        email: user.email,
+        uid: userRecord.uid,
+        email: userRecord.email,
+        name: userRecord.name,
+        avatarColor: userRecord.avatarColor,
+        apiTokenCreatedAt: userRecord.apiTokenCreatedAt,
+      });
+    } catch (error) {
+      this.handleError(error, res);
+    }
+  }
+
+  async regenerateToken(req: Request, res: Response) {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+
+      // Check if user record exists
+      const existingRecord = await this.authService.getUserRecord(req.user.uid);
+
+      if (!existingRecord) {
+        // Create user record if it doesn't exist (for users who signed up before this feature)
+        const name = req.body.name?.trim();
+        if (!name || name.length < 2) {
+          throw new ValidationError('Name is required (at least 2 characters) to generate API token');
+        }
+
+        const { apiToken } = await this.authService.createUserRecord(
+          req.user.uid,
+          req.user.email,
+          name
+        );
+
+        return res.json({
+          apiToken,
+          createdAt: Date.now(),
+          message: 'API token created successfully',
+        });
+      }
+
+      const result = await this.authService.regenerateApiToken(req.user.uid);
+
+      res.json({
+        apiToken: result.apiToken,
+        createdAt: result.createdAt,
+        message: 'API token regenerated successfully',
       });
     } catch (error) {
       this.handleError(error, res);

@@ -2,9 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import fs from 'fs';
-import fsPromises from 'fs/promises';
-import path from 'path';
 import { Server as HttpServer } from 'http';
 import { Server as WebSocketServer, WebSocket } from 'ws';
 
@@ -16,7 +13,7 @@ import { AuthService } from './services/auth.service';
 import { ProjectController } from './controllers/project.controller';
 import { EndpointController } from './controllers/endpoint.controller';
 import { AuthController } from './controllers/auth.controller';
-import { createAuthMiddleware, requireAuth } from './middleware/auth.middleware';
+import { createAuthMiddleware, requireAuth, requireFullAuth } from './middleware/auth.middleware';
 import { ProjectNotFoundError } from './types/error.types';
 import logger from './utils/logger';
 
@@ -44,15 +41,11 @@ export class MockApiServer {
   private endpointController: EndpointController;
   private authController: AuthController | null = null;
 
-  // Log storage with file persistence
-  private logs: LogEntry[] = [];
-  private logsDir: string;
   // Map to store connected WebSocket clients by project ID
   private clients: Map<string, WebSocket[]> = new Map();
 
   constructor(config: ServerConfig) {
     this.config = config;
-    this.logsDir = path.resolve(__dirname, '../logs');
     this.firebaseService = new FirebaseService(config.firebase);
     this.projectService = new ProjectService(this.firebaseService);
     this.endpointService = new EndpointService(this.firebaseService);
@@ -68,51 +61,9 @@ export class MockApiServer {
       logger.info('Firebase Auth disabled (FIREBASE_WEB_API_KEY not set)');
     }
 
-    this.ensureLogsDirectory();
-    this.loadLogs();
     this.setupMiddleware();
     this.setupRoutes();
     this.setupErrorHandling();
-  }
-
-  private ensureLogsDirectory() {
-    if (!fs.existsSync(this.logsDir)) {
-      fs.mkdirSync(this.logsDir, { recursive: true });
-    }
-  }
-
-  private getLogFilePath(projectId: string): string {
-    return path.join(this.logsDir, `${projectId}.json`);
-  }
-
-  private loadLogs() {
-    try {
-      if (!fs.existsSync(this.logsDir)) return;
-
-      const files = fs.readdirSync(this.logsDir).filter(f => f.endsWith('.json'));
-      for (const file of files) {
-        const filePath = path.join(this.logsDir, file);
-        const data = fs.readFileSync(filePath, 'utf-8');
-        const projectLogs: LogEntry[] = JSON.parse(data);
-        this.logs.push(...projectLogs.map(log => ({
-          ...log,
-          timestamp: new Date(log.timestamp)
-        })));
-      }
-      logger.info('Logs loaded from disk', { count: this.logs.length });
-    } catch (error) {
-      logger.error('Error loading logs from disk', { error: (error as Error).message });
-    }
-  }
-
-  private async saveLogs(projectId: string): Promise<void> {
-    try {
-      const projectLogs = this.logs.filter(log => log.projectId === projectId);
-      const filePath = this.getLogFilePath(projectId);
-      await fsPromises.writeFile(filePath, JSON.stringify(projectLogs, null, 2));
-    } catch (error) {
-      logger.error('Error saving logs for project', { projectId, error: (error as Error).message });
-    }
   }
 
   private setupMiddleware() {
@@ -144,20 +95,21 @@ export class MockApiServer {
       this.app.post('/_mock-api/auth/signup', (req, res) => this.authController!.signup(req, res));
       this.app.post('/_mock-api/auth/login', (req, res) => this.authController!.login(req, res));
       this.app.get('/_mock-api/auth/me', requireAuth, (req, res) => this.authController!.getCurrentUser(req, res));
+      this.app.post('/_mock-api/auth/token/regenerate', requireFullAuth, (req, res) => this.authController!.regenerateToken(req, res));
       logger.info('Auth routes registered at /_mock-api/auth/*');
     }
 
-    // Control plane routes (projects and endpoints)
-    this.app.post('/_mock-api/projects', (req, res) => this.projectController.createProject(req, res));
-    this.app.get('/_mock-api/projects', (req, res) => this.projectController.listProjects(req, res));
-    this.app.get('/_mock-api/projects/:projectId', (req, res) => this.projectController.getProjectById(req, res));
-    this.app.patch('/_mock-api/projects/:projectId', (req, res) => this.projectController.updateProject(req, res));
-    this.app.delete('/_mock-api/projects/:projectId', (req, res) => this.projectController.deleteProject(req, res));
+    // Control plane routes (projects and endpoints) - require full Firebase auth, not API keys
+    this.app.post('/_mock-api/projects', requireFullAuth, (req, res) => this.projectController.createProject(req, res));
+    this.app.get('/_mock-api/projects', requireFullAuth, (req, res) => this.projectController.listProjects(req, res));
+    this.app.get('/_mock-api/projects/:projectId', requireFullAuth, (req, res) => this.projectController.getProjectById(req, res));
+    this.app.patch('/_mock-api/projects/:projectId', requireFullAuth, (req, res) => this.projectController.updateProject(req, res));
+    this.app.delete('/_mock-api/projects/:projectId', requireFullAuth, (req, res) => this.projectController.deleteProject(req, res));
 
-    this.app.post('/_mock-api/projects/:projectId/endpoints', (req, res) => this.endpointController.createEndpoint(req, res));
-    this.app.get('/_mock-api/projects/:projectId/endpoints', (req, res) => this.endpointController.listEndpoints(req, res));
-    this.app.patch('/_mock-api/projects/:projectId/endpoints/:endpointId', (req, res) => this.endpointController.updateEndpoint(req, res));
-    this.app.delete('/_mock-api/projects/:projectId/endpoints/:endpointId', (req, res) => this.endpointController.deleteEndpoint(req, res));
+    this.app.post('/_mock-api/projects/:projectId/endpoints', requireFullAuth, (req, res) => this.endpointController.createEndpoint(req, res));
+    this.app.get('/_mock-api/projects/:projectId/endpoints', requireFullAuth, (req, res) => this.endpointController.listEndpoints(req, res));
+    this.app.patch('/_mock-api/projects/:projectId/endpoints/:endpointId', requireFullAuth, (req, res) => this.endpointController.updateEndpoint(req, res));
+    this.app.delete('/_mock-api/projects/:projectId/endpoints/:endpointId', requireFullAuth, (req, res) => this.endpointController.deleteEndpoint(req, res));
 
     // Mock endpoint handler (should be defined after control plane routes)
     this.app.all('/:projectId/*', async (req, res) => {
@@ -292,14 +244,19 @@ export class MockApiServer {
             // Handle WebSocket commands
             if (data.command === 'getHistory') {
               const limit = data.limit || 100;
-              const projectLogs = this.logs
-                .filter(log => log.projectId === projectId)
-                .slice(-limit);
-              ws.send(JSON.stringify({ type: 'history', logs: projectLogs }));
+              this.firebaseService.getLogs(projectId, limit)
+                .then(logs => ws.send(JSON.stringify({ type: 'history', logs })))
+                .catch(err => {
+                  logger.error('Error fetching logs', { projectId, error: err.message });
+                  ws.send(JSON.stringify({ type: 'error', message: 'Failed to fetch logs' }));
+                });
             } else if (data.command === 'clearLogs') {
-              this.logs = this.logs.filter(log => log.projectId !== projectId);
-              this.saveLogs(projectId).catch(() => {});
-              ws.send(JSON.stringify({ type: 'cleared', message: 'Logs cleared' }));
+              this.firebaseService.clearLogs(projectId)
+                .then(count => ws.send(JSON.stringify({ type: 'cleared', message: `${count} logs cleared` })))
+                .catch(err => {
+                  logger.error('Error clearing logs', { projectId, error: err.message });
+                  ws.send(JSON.stringify({ type: 'error', message: 'Failed to clear logs' }));
+                });
             } else if (data.command === 'ping') {
               ws.send(JSON.stringify({ type: 'pong', timestamp: new Date() }));
             } else {
@@ -363,26 +320,18 @@ export class MockApiServer {
 
   private captureLog(logEntry: LogEntry): void {
     logger.debug('Log captured', { method: logEntry.method, path: logEntry.path, projectId: logEntry.projectId, status: logEntry.responseStatus });
-    this.logs.push(logEntry);
 
-    // Persist logs to disk (fire and forget - errors logged internally)
-    this.saveLogs(logEntry.projectId).catch(() => {});
+    // Persist log to Firestore (fire and forget)
+    this.firebaseService.saveLog(logEntry).catch(err => {
+      logger.error('Error saving log to Firestore', { projectId: logEntry.projectId, error: err.message });
+    });
 
-    // Broadcast log to relevant clients
+    // Broadcast log to relevant WebSocket clients
     const projectClients = this.clients.get(logEntry.projectId);
     if (projectClients) {
+      const logMessage = JSON.stringify({ type: 'log', ...logEntry });
       projectClients.forEach(client => {
         try {
-          let logMessage = '';
-          try {
-            logMessage = JSON.stringify({ type: 'log', ...logEntry });
-          } catch (jsonError) {
-            logger.error('Error stringifying log entry', { projectId: logEntry.projectId, error: (jsonError as Error).message });
-            if (client.readyState === client.OPEN) {
-              client.send(JSON.stringify({ type: 'error', message: 'Could not serialize log entry' }));
-            }
-            return;
-          }
           if (client.readyState === client.OPEN) {
             client.send(logMessage);
           }
@@ -390,14 +339,6 @@ export class MockApiServer {
           logger.error('Error sending log to WebSocket client', { projectId: logEntry.projectId, error: (error as Error).message });
         }
       });
-    }
-
-    // Cleanup old logs per project (keep last 1000 per project)
-    const projectLogs = this.logs.filter(log => log.projectId === logEntry.projectId);
-    if (projectLogs.length > 1000) {
-      const logsToRemove = projectLogs.slice(0, projectLogs.length - 1000);
-      this.logs = this.logs.filter(log => !logsToRemove.includes(log));
-      this.saveLogs(logEntry.projectId).catch(() => {});
     }
   }
 
